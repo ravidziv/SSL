@@ -4,30 +4,17 @@
 import tensorflow as tf
 
 
-class SimCLR1(tf.keras.Model):
-
-    def __init__(self, encoder: tf.keras.Model, decoder: tf.keras.Model, finetune_decoder:tf.keras.Model = None):
-        super(SimCLR, self).__init__()
-
-        self.combined_model = tf.keras.models.Sequential([tf.keras.layers.Dense(100), tf.keras.layers.Dense(20)])
-
-    def call(self, inputs, training=None, mask=None):
-        ds_one, ds_two = inputs['x'], inputs['x2']
-        z1, z2 = self.combined_model(ds_one), self.combined_model(ds_two)
-        #z1 = tf.math.l2_normalize(z1, axis=1)
-        #z2 = tf.math.l2_normalize(z2, axis=1)
-        return z1, z2
-
 class SimCLR(tf.keras.Model):
 
-    def __init__(self, encoder: tf.keras.Model, decoder: tf.keras.Model=None, finetune_decoder:tf.keras.Model = None):
+    def __init__(self, encoder: tf.keras.Model, decoder: tf.keras.Model = None,
+                 finetune_decoder: tf.keras.Model = None):
         super(SimCLR, self).__init__()
         self.encoder = encoder
         self.decoder = decoder
         self.combined_model = tf.keras.Sequential([encoder, decoder])
-        #self.finetune_mode = False
-        #self.finetune_decoder = finetune_decoder
-        #self.combined_model = combined_model
+        # self.finetune_mode = False
+        # self.finetune_decoder = finetune_decoder
+        # self.combined_model = combined_model
 
     def get_config(self):
         return {"encoder": self.encoder, "decoder": self.decoder}
