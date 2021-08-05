@@ -5,7 +5,7 @@ with open("README.md", "r", encoding="utf-8") as fh:
 
 setuptools.setup(
     name='self_supervised',
-    version='0.0.1',
+    version='0.0.2',
     author='Ravid Shwartz-Ziv',
     #author_email='mike_huls@hotmail.com',
     description='Self supervised learning ',
@@ -17,5 +17,5 @@ setuptools.setup(
     },
     license='MIT',
     packages=['self_supervised'],
-    install_requires=['tensorflow'],
+    #install_requires=['tensorflow'],
 )
