@@ -4,9 +4,9 @@ from typing import Tuple, List
 
 import tensorflow as tf
 
-from selfsupervised.SimCLR.SimCLRModel import SimCLR
-from selfsupervised.data_reader import read_cifar10
-from selfsupervised.loss import nt_xent_func
+from self_supervised.SimCLR.SimCLRModel import SimCLR
+from self_supervised.data_reader import read_cifar10
+from self_supervised.loss import nt_xent_func
 
 
 def load_callbacks(train_path: str, save_freq: int) -> Tuple[List[tf.keras.callbacks.Callback], str]:

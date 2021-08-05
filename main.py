@@ -1,7 +1,7 @@
 """Run SSL model (pretrain/ supervised train)"""
 import argparse
-from selfsupervised.train import pretrain_func, finetune_func
-from selfsupervised.models.resnet_loader import load_ResNet
+from self_supervised.train import pretrain_func, finetune_func
+from self_supervised.models.resnet_loader import load_ResNet
 import tensorflow as tf
 import importlib
 
