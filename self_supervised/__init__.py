@@ -1,1 +1,1 @@
-from self_supervised.SimCLR import SimCLRModel
+#from self_supervised.SimCLR import SimCLRModel
