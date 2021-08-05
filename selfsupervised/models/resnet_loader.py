@@ -1,5 +1,5 @@
 import tensorflow as tf
-from self_supervised.models.resnet import resnet
+from selfsupervised.models.resnet import resnet
 
 
 def load_ResNet(version='18', pretrained=False, include_top=False, cifar10=False, weight_decay=None):

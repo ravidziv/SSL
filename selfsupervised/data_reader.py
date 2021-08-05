@@ -1,6 +1,6 @@
 from typing import Tuple
 import tensorflow as tf
-from self_supervised.image_utils import AugmentationModel
+from selfsupervised.image_utils import AugmentationModel
 
 
 def make_datasets(images: tf.Tensor, labels: tf.Tensor, task: str, config_augment: dict,

@@ -4,7 +4,7 @@ with open("README.md", "r", encoding="utf-8") as fh:
     long_description = fh.read()
 
 setuptools.setup(
-    name='self_supervised',
+    name='selfsupervised',
     version='0.0.2',
     author='Ravid Shwartz-Ziv',
     #author_email='mike_huls@hotmail.com',
@@ -16,6 +16,6 @@ setuptools.setup(
         "Bug Tracker": "https://github.com/ravidziv/self-supervised-learning/issues"
     },
     license='MIT',
-    packages=['self_supervised'],
+    packages=['selfsupervised'],
     #install_requires=['tensorflow'],
 )
