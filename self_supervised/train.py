@@ -1,90 +1,91 @@
 """Train from scratch or fine-tune SSL model with tf and keras"""
-import datetime
-from typing import Tuple, List
+import math
+import os
+from datetime import datetime
 
 import tensorflow as tf
 
+import self_supervised.utils as utils
+from bayesian_deep_learning.SWAG.callbacks import SWAGCallback
+from bayesian_deep_learning.SWAG.models import SWAG_model
 from self_supervised.SimCLR.SimCLRModel import SimCLR
-from self_supervised.data_reader import read_cifar10
-from self_supervised.loss import nt_xent_func
+from self_supervised.data import read_dataset
+from self_supervised.utils import load_callbacks
 
 
-def load_callbacks(train_path: str, save_freq: int) -> Tuple[List[tf.keras.callbacks.Callback], str]:
-    """Load tensorboard and checkpoint callbacks based on the log dir
-    Args:
-        :param save_freq: The interval for saving checkpoints
-        :param train_path: the path to store the model
-     """
-    logdir = train_path + datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
-    file_writer = tf.summary.create_file_writer(logdir + "/metrics")
-    file_writer.set_as_default()
-    tensorboard_callback = tf.keras.callbacks.TensorBoard(log_dir=logdir)
-    checkpoint_path = f"{logdir}/cp.ckpt"
-    cp_callback = tf.keras.callbacks.ModelCheckpoint(filepath=checkpoint_path,
-                                                     save_weights_only=True,
-                                                     verbose=1, save_freq=save_freq)
-    callbacks = [tensorboard_callback, cp_callback]
-    return callbacks, logdir
-
-
-def pretrain_func(encoder: tf.keras.Model, decoder: tf.keras.Model, config):
-    """Pretrains the model based on config settings
+def pretrain_func(config):
+    """Pre trains the model based on config settings
     First it load cifar data (with augmentation), then create the SimCLR model from the encoder and decoder
     and then train the  model
     Args:
-        :param encoder: The encoder for the simCLR model
-        :param decoder: The decoder for the simCLR model
         :param config: dict with all the configs
     """
-    load_data_func = None
-    if config.dataset == 'cifar10':
-        load_data_func = read_cifar10
-    train_dataset, test_dataset, train_num_of_examples = load_data_func(batch_size=config.batch_size,
-                                                                        num_epochs=config.num_epochs,
-                                                                        task=config.task, config_augment=config)
-    iterations_per_epoch = train_num_of_examples // config.batch_size
-    total_iterations = iterations_per_epoch * config.num_epochs
-    learning_rate = tf.keras.optimizers.schedules.CosineDecay(initial_learning_rate=config.learning_rate,
-                                                              decay_steps=total_iterations)
+    strategy = tf.distribute.MirroredStrategy()
+    with strategy.scope():
+        logdir = os.path.join(config.log_dir, datetime.now().strftime("%Y%m%d-%H%M%S"))
+        train_dataset, test_dataset, num_train_examples, num_eval_examples, num_classes = read_dataset(
+            train_batch_size=config.train_batch_size,
+            color_jitter_strength=config.color_jitter_strength,
+            train_mode=config.train_mode,
+            eval_batch_size=config.eval_batch_size,
+            strategy=strategy,
+            image_size=config.image_size,
+            cache_dataset=config.cache_dataset)
 
-    optimizer = tf.keras.optimizers.SGD(learning_rate, momentum=config.momentum)
-    model = SimCLR(encoder=encoder, decoder=decoder)
-    loss = nt_xent_func(temperature=config.temperature)
+        steps_per_epoch = config.train_steps or int(
+            math.ceil(num_train_examples / config.train_batch_size))
 
-    model.compile(loss=loss, optimizer=optimizer)
-    callbacks, logdir = load_callbacks(train_path=config.train_file_path, save_freq=config.save_freq)
-    # model.run_eagerly = True
-    print(f'Log dir: {logdir}')
-    model.fit(train_dataset, validation_data=train_dataset, validation_steps=10, steps_per_epoch=200, epochs=2,
-              callbacks=callbacks)
+        eval_steps = config.eval_steps or int(
+            math.ceil(num_eval_examples / config.eval_batch_size))
+        # Get optimizers
+        contrastive_learning_rate = utils.WarmUpAndCosineDecay(base_learning_rate=config.learning_rate,
+                                                               num_examples=num_train_examples,
+                                                               warmup_epochs=config.warmup_epochs,
+                                                               train_batch_size=config.train_batch_size,
+                                                               learning_rate_scaling=config.learning_rate_scaling,
+                                                               train_steps=config.train_steps,
+                                                               train_epochs=config.train_epochs)
 
+        contrastive_optimizer, probe_optimizer = utils.build_optimizers(
+            contrastive_learning_rate=contrastive_learning_rate,
+            probe_learning_rate=config.probe_learning_rate,
+            contrastive_optimizer_type=config.contrastive_optimizer,
+            probe_optimizer_type=config.probe_optimizer,
+            contrastive_momentum=config.momentum, probe_momentum=config.probe_momentum,
+            probe_weight_decay=config.probe_weight_decay, contrastive_weight_decay=config.contrastive_weight_decay,
+        )
+        # The SSL model
+        model = SimCLR(num_classes=num_classes,
+                       projection_head_args=config.projection_head_args, resent_head_args=config.resent_head_args,
+                       train_mode=config.train_mode, lineareval_while_pretraining=config.lineareval_while_pretraining)
+        # The callbacks
+        callbacks = load_callbacks(logdir=logdir, save_freq=config.save_freq)
+        # If we want SWAG train
+        if config.use_swag:
+            clone_model = model = SimCLR(num_classes=num_classes,
+                                         projection_head_args=config.projection_head_args,
+                                         resent_head_args=config.resent_head_args,
+                                         train_mode=config.train_mode,
+                                         lineareval_while_pretraining=config.lineareval_while_pretraining)
+            clone_model.set_weights(model.get_weights())
+            old_model = model
+            old_model.compile(contrastive_optimizer=contrastive_optimizer, probe_optimizer=probe_optimizer,
+                              temperature=config.temperature)
+            clone_model.compile(contrastive_optimizer=contrastive_optimizer, probe_optimizer=probe_optimizer,
+                                temperature=config.temperature)
+            model = SWAG_model(base_model=old_model, swag_model=clone_model)
+            swag = SWAGCallback(start_epoch=config.swag_start_epoch)
+            # swag_sch = SWAGRScheduler(start_epoch=config.swag_start_epoch, lr_schedule=config.swag_lr_schedule,
+            #                          swag_lr2=config.swag_lr2, swag_lr=config.swag_lr,
+            #                          swag_freq=config.swag_freq)
+            callbacks.append(swag)
+            model.compile()
+        else:
+            model.compile(contrastive_optimizer=contrastive_optimizer, probe_optimizer=probe_optimizer,
+                          temperature=config.temperature)
 
-def finetune_func(encoder: tf.keras.Model, decoder: tf.keras.Model, readout_model: tf.keras.Model, config):
-    """fine-tuning the given model
-    Args:
-        :param encoder: The encoder for the simCLR model
-        :param decoder: The decoder for the simCLR model
-        :param readout_model: The readout for the simCLR model
-        :param config: dict with all the configs
-    """
-    load_data_func = None
-    if config.dataset == 'cifar10':
-        load_data_func = read_cifar10
-    train_dataset, test_dataset, train_num_of_examples = load_data_func(batch_size=config.batch_size,
-                                                                        num_epochs=config.num_epochs,
-                                                                        task=config.task, config_augment=config)
-    iterations_per_epoch = train_num_of_examples // config.batch_size
-    total_iterations = iterations_per_epoch * config.num_epochs
-    model = SimCLR(encoder=encoder, decoder=decoder)
-    learning_rate = tf.keras.experimental.CosineDecay(config.learning_rate, total_iterations)
-    model.load_weights(config.logdir_model).expect_partial()
-    # train only the readout
-    if config.freeze:
-        model.trainable = False
-    model_new = tf.keras.Sequential([model.encoder, readout_model])
-    optimizer = tf.keras.optimizers.SGD(learning_rate=learning_rate, momentum=config.momentum)
-    loss = tf.keras.losses.SparseCategoricalCrossentropy(from_logits=True)
-    model_new.compile(loss=loss, optimizer=optimizer, metrics='acc')
-    callbacks, logdir = load_callbacks(train_path=config.train_file_path, save_freq=config.save_freq)
-    #model_new.run_eagerly = True
-    model_new.fit(train_dataset, validation_data=test_dataset, callbacks=callbacks)
+        # model.run_eagerly = True
+        print(f'Log dir: {logdir}')
+        # Train
+        model.fit(train_dataset, validation_data=test_dataset, validation_steps=eval_steps,
+                  epochs=config.train_epochs, callbacks=callbacks, steps_per_epoch=steps_per_epoch)
